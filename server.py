@@ -41,6 +41,19 @@ def create_app() -> Flask:
     def index():
         return send_from_directory(TEMPLATES_DIR, "index.html")
 
+    # Served from root so the SW scope covers "/" and icons resolve correctly
+    @app.route("/manifest.json")
+    def pwa_manifest():
+        return send_from_directory(STATIC_DIR, "manifest.json")
+
+    @app.route("/sw.js")
+    def service_worker():
+        resp = send_from_directory(STATIC_DIR, "sw.js")
+        # Must not be cached or the browser will never pick up updates
+        resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        resp.headers["Service-Worker-Allowed"] = "/"
+        return resp
+
     # ── /api/stats ───────────────────────────────────────────────────────────────
 
     @app.route("/api/stats")
