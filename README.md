@@ -1,4 +1,4 @@
-# 🧠 Second Brain
+# Second Brain
 
 > A local-first personal knowledge base — capture notes, links, jobs, ideas, and inspiration from your terminal, browser, or iPhone. Everything syncs through iCloud.
 
@@ -12,7 +12,7 @@
 - **Apple Shortcut** — share any URL or text from iOS/Mac directly into your inbox with one tap from the share sheet
 - **iCloud sync** — database and inbox live in iCloud Drive, sync automatically to all your Apple devices
 - **Full-text search** — SQLite FTS5 with Porter stemming; falls back to LIKE for fuzzy queries
-- **🎲 Random pick** — surfaces an entry you haven't revisited in a while
+- **Random pick** — surfaces an entry you haven't revisited in a while
 - **Inbox system** — items captured on iPhone queue in `inbox.txt`; one command imports them all
 
 ---
