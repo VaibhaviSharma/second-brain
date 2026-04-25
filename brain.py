@@ -641,13 +641,77 @@ def import_inbox_cmd() -> None:
     console.print(table)
 
 
+# ── SSL cert helper ───────────────────────────────────────────────────────────────
+
+def _ensure_cert(lan_ip: str):
+    """
+    Generate a self-signed cert for the LAN IP using macOS's built-in openssl.
+    Stored in BRAIN_DIR (iCloud) so it syncs to iPhone Files app for easy install.
+    Returns (cert_path, key_path).
+    """
+    import subprocess, tempfile, os
+
+    cert_path = BRAIN_DIR / "brain-ssl.crt"
+    key_path  = BRAIN_DIR / "brain-ssl.key"
+
+    if cert_path.exists() and key_path.exists():
+        return cert_path, key_path
+
+    console.print("[dim]Generating SSL certificate…[/dim]")
+
+    # Config file approach — works with both OpenSSL and macOS LibreSSL
+    conf = f"""[req]
+distinguished_name = dn
+x509_extensions    = v3
+prompt             = no
+
+[dn]
+CN = Second Brain Local
+
+[v3]
+subjectAltName     = @san
+basicConstraints   = CA:TRUE
+
+[san]
+IP.1  = {lan_ip}
+IP.2  = 127.0.0.1
+DNS.1 = localhost
+"""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".cnf", delete=False) as f:
+        f.write(conf)
+        conf_file = f.name
+
+    try:
+        subprocess.run(
+            [
+                "openssl", "req", "-x509",
+                "-newkey", "rsa:2048",
+                "-keyout", str(key_path),
+                "-out",    str(cert_path),
+                "-days",   "825",       # iOS max allowed validity
+                "-nodes",               # no passphrase
+                "-config", conf_file,
+            ],
+            check=True,
+            capture_output=True,
+        )
+    except subprocess.CalledProcessError as e:
+        console.print(f"[red]openssl failed:[/red] {e.stderr.decode()}")
+        sys.exit(1)
+    finally:
+        os.unlink(conf_file)
+
+    console.print(f"[green]✓ Certificate created[/green] → [dim]{cert_path}[/dim]")
+    return cert_path, key_path
+
+
 # ── web ───────────────────────────────────────────────────────────────────────────
 
 @cli.command()
-@click.option("--port", "-p", default=8787, show_default=True, help="Port to listen on")
+@click.option("--port",       "-p", default=8787, show_default=True, help="Port to listen on")
 @click.option("--no-browser", is_flag=True, help="Don't open the browser automatically")
-@click.option("--local-only", is_flag=True, help="Bind to 127.0.0.1 only (don't expose on network)")
-def web(port: int, no_browser: bool, local_only: bool) -> None:
+@click.option("--https",      is_flag=True, help="Serve over HTTPS (required for PWA on iPhone)")
+def web(port: int, no_browser: bool, https: bool) -> None:
     """Launch the web UI — accessible on local network for iPhone."""
     try:
         import flask  # noqa: F401
@@ -661,26 +725,43 @@ def web(port: int, no_browser: bool, local_only: bool) -> None:
     import socket, threading, webbrowser
     from server import create_app
 
-    host = "127.0.0.1" if local_only else "0.0.0.0"
+    # Resolve LAN IP
+    lan_ip = None
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        lan_ip = s.getsockname()[0]
+        s.close()
+    except Exception:
+        pass
 
-    # Resolve the Mac's LAN IP for the phone URL
-    lan_ip = "YOUR-MAC-IP"
-    if not local_only:
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            lan_ip = s.getsockname()[0]
-            s.close()
-        except Exception:
-            pass
+    scheme     = "https" if https else "http"
+    local_url  = f"{scheme}://localhost:{port}"
+    phone_url  = f"{scheme}://{lan_ip}:{port}" if lan_ip else None
+    ssl_ctx    = None
 
-    local_url = f"http://localhost:{port}"
-    phone_url = f"http://{lan_ip}:{port}"
+    if https:
+        if not lan_ip:
+            console.print("[red]Could not detect LAN IP — are you on WiFi?[/red]")
+            sys.exit(1)
+        cert, key = _ensure_cert(lan_ip)
+        ssl_ctx   = (str(cert), str(key))
 
-    console.print(f"\n[bold]🧠 Brain Web UI[/bold]")
-    console.print(f"   Mac:   [cyan]{local_url}[/cyan]")
-    if not local_only:
-        console.print(f"   Phone: [cyan]{phone_url}[/cyan]  [dim](same WiFi — open in Safari)[/dim]")
+        console.print(f"\n[bold]🧠 Brain Web UI[/bold]  [dim](HTTPS)[/dim]")
+        console.print(f"   Mac:   [cyan]{local_url}[/cyan]")
+        console.print(f"   Phone: [cyan]{phone_url}[/cyan]  [dim](open in Safari)[/dim]")
+        console.print(f"\n[bold yellow]One-time iPhone setup[/bold yellow] [dim](skip if already done)[/dim]")
+        console.print( "   1. Open [bold]Files[/bold] app → iCloud Drive → brain → [bold]brain-ssl.crt[/bold] → tap it → Install")
+        console.print( "   2. [bold]Settings → General → About → Certificate Trust Settings[/bold]")
+        console.print( "      → [bold]Second Brain Local[/bold] → toggle [bold]on[/bold]")
+        console.print( "   3. Refresh the page in Safari\n")
+    else:
+        console.print(f"\n[bold]🧠 Brain Web UI[/bold]")
+        console.print(f"   Mac:   [cyan]{local_url}[/cyan]")
+        if phone_url:
+            console.print(f"   Phone: [cyan]{phone_url}[/cyan]  [dim](same WiFi)[/dim]")
+            console.print(f"   [dim]Tip: use --https for full PWA support (Add to Home Screen + offline)[/dim]")
+
     console.print(f"   [dim]DB → {DB_PATH}[/dim]")
     console.print("[dim]   Ctrl+C to stop\n[/dim]")
 
@@ -689,7 +770,9 @@ def web(port: int, no_browser: bool, local_only: bool) -> None:
 
     try:
         app = create_app()
-        app.run(host=host, port=port, debug=False, threaded=True, use_reloader=False)
+        app.run(host="0.0.0.0", port=port, debug=False,
+                threaded=True, use_reloader=False,
+                ssl_context=ssl_ctx)
     except OSError as e:
         if "Address already in use" in str(e):
             console.print(f"[red]Port {port} in use.[/red]  Try: brain web --port {port+1}")
