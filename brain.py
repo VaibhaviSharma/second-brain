@@ -646,9 +646,9 @@ def import_inbox_cmd() -> None:
 @cli.command()
 @click.option("--port", "-p", default=8787, show_default=True, help="Port to listen on")
 @click.option("--no-browser", is_flag=True, help="Don't open the browser automatically")
-@click.option("--host", default="127.0.0.1", hidden=True)
-def web(port: int, no_browser: bool, host: str) -> None:
-    """Launch the web UI at http://localhost:PORT"""
+@click.option("--local-only", is_flag=True, help="Bind to 127.0.0.1 only (don't expose on network)")
+def web(port: int, no_browser: bool, local_only: bool) -> None:
+    """Launch the web UI — accessible on local network for iPhone."""
     try:
         import flask  # noqa: F401
     except ImportError:
@@ -658,20 +658,37 @@ def web(port: int, no_browser: bool, host: str) -> None:
         console.print("[red]Database not found.[/red] Run [bold cyan]brain init[/bold cyan] first.")
         sys.exit(1)
 
-    import threading, webbrowser
+    import socket, threading, webbrowser
     from server import create_app
 
-    app = create_app()
-    url = f"http://{host}:{port}"
+    host = "127.0.0.1" if local_only else "0.0.0.0"
+
+    # Resolve the Mac's LAN IP for the phone URL
+    lan_ip = "YOUR-MAC-IP"
+    if not local_only:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            lan_ip = s.getsockname()[0]
+            s.close()
+        except Exception:
+            pass
+
+    local_url = f"http://localhost:{port}"
+    phone_url = f"http://{lan_ip}:{port}"
+
     console.print(f"\n[bold]🧠 Brain Web UI[/bold]")
-    console.print(f"   [cyan]{url}[/cyan]")
+    console.print(f"   Mac:   [cyan]{local_url}[/cyan]")
+    if not local_only:
+        console.print(f"   Phone: [cyan]{phone_url}[/cyan]  [dim](same WiFi — open in Safari)[/dim]")
     console.print(f"   [dim]DB → {DB_PATH}[/dim]")
     console.print("[dim]   Ctrl+C to stop\n[/dim]")
 
     if not no_browser:
-        threading.Timer(0.9, lambda: webbrowser.open(url)).start()
+        threading.Timer(0.9, lambda: webbrowser.open(local_url)).start()
 
     try:
+        app = create_app()
         app.run(host=host, port=port, debug=False, threaded=True, use_reloader=False)
     except OSError as e:
         if "Address already in use" in str(e):
