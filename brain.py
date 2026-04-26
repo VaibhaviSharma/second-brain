@@ -22,8 +22,9 @@ Commands:
     stats                 Overall stats
     export                Export to JSON
     web                   Launch the web UI
+    bot                   Start the Telegram bot
 
-Install deps:  pip install click rich flask
+Install deps:  pip install -r requirements.txt
 Make a shortcut: chmod +x brain.py && ln -s $(pwd)/brain.py /usr/local/bin/brain
 """
 
@@ -43,8 +44,8 @@ from rich.prompt import Confirm, IntPrompt, Prompt
 from rich.table import Table
 
 from db import (
-    DB_PATH, BRAIN_DIR, INBOX_PATH, VALID_STATUSES, DEFAULT_TYPES,
-    get_db, init_db, now_iso, normalise_tags, fts_search, import_inbox,
+    DB_PATH, VALID_STATUSES, DEFAULT_TYPES,
+    get_db, init_db, now_iso, normalise_tags, fts_search,
 )
 
 # ── Console + display constants ─────────────────────────────────────────────────
@@ -594,125 +595,13 @@ def export(output, status, etype, pretty) -> None:
         print(payload)
 
 
-# ── import-inbox ─────────────────────────────────────────────────────────────────
-
-@cli.command("import-inbox")
-def import_inbox_cmd() -> None:
-    """Import pending items from the iCloud inbox.txt file."""
-    if not INBOX_PATH.exists():
-        console.print("[dim]Inbox file doesn't exist yet — nothing to import.[/dim]")
-        console.print(f"[dim]Expected: {INBOX_PATH}[/dim]")
-        return
-
-    raw = INBOX_PATH.read_text(encoding="utf-8")
-    pending = [l.strip() for l in raw.splitlines() if l.strip()]
-    if not pending:
-        console.print("[dim]Inbox is empty. Nothing to import.[/dim]")
-        return
-
-    console.print(f"\n[bold cyan]📥 Inbox:[/bold cyan] {len(pending)} item{'s' if len(pending) != 1 else ''} pending\n")
-
-    db      = _get_db()
-    result  = import_inbox(db)
-    db.close()
-
-    if result["imported"] == 0:
-        console.print("[dim]No items imported.[/dim]")
-        return
-
-    skipped_note = f" [dim]({result['skipped']} blank line{'s' if result['skipped']!=1 else ''} skipped)[/dim]" \
-                   if result["skipped"] else ""
-    console.print(
-        f"[green]✓ Imported {result['imported']} item{'s' if result['imported']!=1 else ''}[/green]"
-        + skipped_note
-    )
-
-    table = Table(box=box.SIMPLE, header_style="bold cyan", show_edge=False)
-    table.add_column("ID",    style="dim", width=5, justify="right")
-    table.add_column("Type",  width=10)
-    table.add_column("Title")
-    for item in result["items"]:
-        col = _type_style(item["type"])
-        table.add_row(
-            str(item["id"]),
-            f"[{col}]{item['type']}[/{col}]",
-            item["title"][:72] + ("…" if len(item["title"]) > 72 else ""),
-        )
-    console.print(table)
-
-
-# ── SSL cert helper ───────────────────────────────────────────────────────────────
-
-def _ensure_cert(lan_ip: str):
-    """
-    Generate a self-signed cert for the LAN IP using macOS's built-in openssl.
-    Stored in BRAIN_DIR (iCloud) so it syncs to iPhone Files app for easy install.
-    Returns (cert_path, key_path).
-    """
-    import subprocess, tempfile, os
-
-    cert_path = BRAIN_DIR / "brain-ssl.crt"
-    key_path  = BRAIN_DIR / "brain-ssl.key"
-
-    if cert_path.exists() and key_path.exists():
-        return cert_path, key_path
-
-    console.print("[dim]Generating SSL certificate…[/dim]")
-
-    # Config file approach — works with both OpenSSL and macOS LibreSSL
-    conf = f"""[req]
-distinguished_name = dn
-x509_extensions    = v3
-prompt             = no
-
-[dn]
-CN = Second Brain Local
-
-[v3]
-subjectAltName     = @san
-basicConstraints   = CA:TRUE
-
-[san]
-IP.1  = {lan_ip}
-IP.2  = 127.0.0.1
-DNS.1 = localhost
-"""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".cnf", delete=False) as f:
-        f.write(conf)
-        conf_file = f.name
-
-    try:
-        subprocess.run(
-            [
-                "openssl", "req", "-x509",
-                "-newkey", "rsa:2048",
-                "-keyout", str(key_path),
-                "-out",    str(cert_path),
-                "-days",   "825",       # iOS max allowed validity
-                "-nodes",               # no passphrase
-                "-config", conf_file,
-            ],
-            check=True,
-            capture_output=True,
-        )
-    except subprocess.CalledProcessError as e:
-        console.print(f"[red]openssl failed:[/red] {e.stderr.decode()}")
-        sys.exit(1)
-    finally:
-        os.unlink(conf_file)
-
-    console.print(f"[green]✓ Certificate created[/green] → [dim]{cert_path}[/dim]")
-    return cert_path, key_path
-
-
 # ── web ───────────────────────────────────────────────────────────────────────────
 
 @cli.command()
 @click.option("--port",       "-p", default=8787, show_default=True, help="Port to listen on")
 @click.option("--no-browser", is_flag=True, help="Don't open the browser automatically")
-@click.option("--https",      is_flag=True, help="Serve over HTTPS (required for PWA on iPhone)")
-def web(port: int, no_browser: bool, https: bool) -> None:
-    """Launch the web UI — accessible on local network for iPhone."""
+def web(port: int, no_browser: bool) -> None:
+    """Launch the web UI in your Mac browser."""
     try:
         import flask  # noqa: F401
     except ImportError:
@@ -722,46 +611,13 @@ def web(port: int, no_browser: bool, https: bool) -> None:
         console.print("[red]Database not found.[/red] Run [bold cyan]brain init[/bold cyan] first.")
         sys.exit(1)
 
-    import socket, threading, webbrowser
+    import threading, webbrowser
     from server import create_app
 
-    # Resolve LAN IP
-    lan_ip = None
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        lan_ip = s.getsockname()[0]
-        s.close()
-    except Exception:
-        pass
+    local_url = f"http://localhost:{port}"
 
-    scheme     = "https" if https else "http"
-    local_url  = f"{scheme}://localhost:{port}"
-    phone_url  = f"{scheme}://{lan_ip}:{port}" if lan_ip else None
-    ssl_ctx    = None
-
-    if https:
-        if not lan_ip:
-            console.print("[red]Could not detect LAN IP — are you on WiFi?[/red]")
-            sys.exit(1)
-        cert, key = _ensure_cert(lan_ip)
-        ssl_ctx   = (str(cert), str(key))
-
-        console.print(f"\n[bold]🧠 Brain Web UI[/bold]  [dim](HTTPS)[/dim]")
-        console.print(f"   Mac:   [cyan]{local_url}[/cyan]")
-        console.print(f"   Phone: [cyan]{phone_url}[/cyan]  [dim](open in Safari)[/dim]")
-        console.print(f"\n[bold yellow]One-time iPhone setup[/bold yellow] [dim](skip if already done)[/dim]")
-        console.print( "   1. Open [bold]Files[/bold] app → iCloud Drive → brain → [bold]brain-ssl.crt[/bold] → tap it → Install")
-        console.print( "   2. [bold]Settings → General → About → Certificate Trust Settings[/bold]")
-        console.print( "      → [bold]Second Brain Local[/bold] → toggle [bold]on[/bold]")
-        console.print( "   3. Refresh the page in Safari\n")
-    else:
-        console.print(f"\n[bold]🧠 Brain Web UI[/bold]")
-        console.print(f"   Mac:   [cyan]{local_url}[/cyan]")
-        if phone_url:
-            console.print(f"   Phone: [cyan]{phone_url}[/cyan]  [dim](same WiFi)[/dim]")
-            console.print(f"   [dim]Tip: use --https for full PWA support (Add to Home Screen + offline)[/dim]")
-
+    console.print(f"\n[bold]🧠 Brain Web UI[/bold]")
+    console.print(f"   [cyan]{local_url}[/cyan]")
     console.print(f"   [dim]DB → {DB_PATH}[/dim]")
     console.print("[dim]   Ctrl+C to stop\n[/dim]")
 
@@ -770,14 +626,27 @@ def web(port: int, no_browser: bool, https: bool) -> None:
 
     try:
         app = create_app()
-        app.run(host="0.0.0.0", port=port, debug=False,
-                threaded=True, use_reloader=False,
-                ssl_context=ssl_ctx)
+        app.run(host="127.0.0.1", port=port, debug=False,
+                threaded=True, use_reloader=False)
     except OSError as e:
         if "Address already in use" in str(e):
             console.print(f"[red]Port {port} in use.[/red]  Try: brain web --port {port+1}")
         else:
             console.print(f"[red]{e}[/red]")
+        sys.exit(1)
+
+
+# ── bot ───────────────────────────────────────────────────────────────────────────
+
+@cli.command()
+def bot() -> None:
+    """Start the Telegram bot (requires TELEGRAM_BOT_TOKEN in .env)."""
+    try:
+        import bot as bot_module
+        bot_module.main()
+    except ImportError as e:
+        console.print(f"[red]Missing dependency:[/red] {e}")
+        console.print("Run: pip install python-telegram-bot python-dotenv")
         sys.exit(1)
 
 

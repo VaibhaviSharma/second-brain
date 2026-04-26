@@ -15,8 +15,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from flask import Flask, jsonify, request, send_from_directory  # type: ignore
 
 from db import (
-    DB_PATH, INBOX_PATH, VALID_STATUSES,
-    get_db, now_iso, normalise_tags, fts_search, import_inbox,
+    DB_PATH, VALID_STATUSES,
+    get_db, now_iso, normalise_tags, fts_search,
 )
 
 # ── Paths ───────────────────────────────────────────────────────────────────────
@@ -40,19 +40,6 @@ def create_app() -> Flask:
     @app.route("/")
     def index():
         return send_from_directory(TEMPLATES_DIR, "index.html")
-
-    # Served from root so the SW scope covers "/" and icons resolve correctly
-    @app.route("/manifest.json")
-    def pwa_manifest():
-        return send_from_directory(STATIC_DIR, "manifest.json")
-
-    @app.route("/sw.js")
-    def service_worker():
-        resp = send_from_directory(STATIC_DIR, "sw.js")
-        # Must not be cached or the browser will never pick up updates
-        resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-        resp.headers["Service-Worker-Allowed"] = "/"
-        return resp
 
     # ── /api/stats ───────────────────────────────────────────────────────────────
 
@@ -92,7 +79,7 @@ def create_app() -> Flask:
         status = request.args.get("status", "").strip()
         sort   = request.args.get("sort",   "created_at").strip()
         order  = request.args.get("order",  "desc").strip().upper()
-        limit  = min(int(request.args.get("limit",  25)), 100)
+        limit  = min(int(request.args.get("limit",  25)), 200)
         offset = max(int(request.args.get("offset",  0)),  0)
 
         if sort  not in _SAFE_SORT:       sort  = "created_at"
@@ -161,7 +148,7 @@ def create_app() -> Flask:
         status   = str(data.get("status",  "active"))
 
         if not 1 <= priority <= 5:
-            return jsonify({"error": "priority must be 1–5"}), 400
+            return jsonify({"error": "priority must be 1-5"}), 400
         if status not in VALID_STATUSES:
             return jsonify({"error": "invalid status"}), 400
 
@@ -221,7 +208,7 @@ def create_app() -> Flask:
             if not title:
                 return jsonify({"error": "title required"}), 400
             if not 1 <= priority <= 5:
-                return jsonify({"error": "priority must be 1–5"}), 400
+                return jsonify({"error": "priority must be 1-5"}), 400
             if status not in VALID_STATUSES:
                 return jsonify({"error": "invalid status"}), 400
 
@@ -292,32 +279,6 @@ def create_app() -> Flask:
             db.close()
         return jsonify([dict(r) for r in rows])
 
-    # ── /api/inbox/count ─────────────────────────────────────────────────────────
-
-    @app.route("/api/inbox/count")
-    def api_inbox_count():
-        count = 0
-        if INBOX_PATH.exists():
-            try:
-                lines = [l.strip() for l in
-                         INBOX_PATH.read_text(encoding="utf-8").splitlines()
-                         if l.strip()]
-                count = len(lines)
-            except OSError:
-                pass
-        return jsonify({"count": count})
-
-    # ── /api/inbox/import ────────────────────────────────────────────────────────
-
-    @app.route("/api/inbox/import", methods=["POST"])
-    def api_inbox_import():
-        db = get_db()
-        try:
-            result = import_inbox(db)
-        finally:
-            db.close()
-        return jsonify(result)
-
     # ── /api/random ───────────────────────────────────────────────────────────────
 
     @app.route("/api/random")
@@ -353,7 +314,7 @@ if __name__ == "__main__":
         sys.exit(1)
     port = int(os.environ.get("BRAIN_PORT", 8787))
     url  = f"http://127.0.0.1:{port}"
-    print(f"Brain Web UI → {url}  (Ctrl+C to stop)")
+    print(f"Brain Web UI -> {url}  (Ctrl+C to stop)")
     threading.Timer(0.9, lambda: webbrowser.open(url)).start()
     create_app().run(host="127.0.0.1", port=port, debug=False,
                      threaded=True, use_reloader=False)

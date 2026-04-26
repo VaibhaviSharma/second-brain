@@ -3,61 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Brain</title>
-
-<!-- PWA manifest -->
-<link rel="manifest" href="/manifest.json">
-
-<!-- iOS "Add to Home Screen" -->
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Brain">
-<link rel="apple-touch-icon" href="/static/icon-apple.png">
-
-<!-- Theme colour (browser chrome on Android) -->
-<meta name="theme-color" content="#0d1117">
-
+<title>Second Brain</title>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-<div id="layout">
-  <aside id="sb">
-    <div class="sbh">
-      <div class="logo">🧠 brain</div>
-      <button id="mbt" class="ib" onclick="toggleSB()">☰</button>
-    </div>
-    <nav class="sbn">
-      <a class="nl" href="#dashboard" data-view="dashboard"><span class="ni">◈</span>Dashboard</a>
-      <a class="nl" href="#browse"    data-view="browse">   <span class="ni">⊞</span>Browse</a>
-      <a class="nl" href="#tags"      data-view="tags">     <span class="ni">#</span>Tags</a>
-      <a class="nl" href="#types"     data-view="types">    <span class="ni">⊙</span>Types</a>
-    </nav>
-    <div class="sbf">
-      <span style="font-size:11px;color:var(--txm)">brain.db</span>
-      <button id="thbtn" class="ib" title="Toggle theme">◑</button>
-    </div>
-  </aside>
-  <main id="main">
-    <div id="app"><div class="loading">Loading…</div></div>
-  </main>
-</div>
-
-<div id="ov" class="ov hi" onclick="ovClick(event)">
-  <div class="modal">
-    <div class="mh"><h2 id="mt">Add Entry</h2><button class="ib" onclick="closeModal()">✕</button></div>
-    <div class="mb" id="mb"></div>
-  </div>
-</div>
-
-<div id="toasts"></div>
+<div id="app"></div>
 <script src="/static/app.js"></script>
-<script>
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('/sw.js')
-        .catch(err => console.warn('SW registration failed:', err));
-    });
-  }
-</script>
 </body>
 </html>

@@ -10,9 +10,8 @@ from datetime import datetime
 from pathlib import Path
 
 # ── Config ─────────────────────────────────────────────────────────────────────
-BRAIN_DIR    = Path.home() / "Library" / "Mobile Documents" / "com~apple~CloudDocs" / "brain"
-DB_PATH      = BRAIN_DIR / "brain.db"
-INBOX_PATH   = BRAIN_DIR / "inbox.txt"
+BRAIN_DIR      = Path.home() / "Library" / "Mobile Documents" / "com~apple~CloudDocs" / "brain"
+DB_PATH        = BRAIN_DIR / "brain.db"
 VALID_STATUSES = ("active", "archived", "done")
 DEFAULT_TYPES  = ("note", "link", "skill", "job", "idea", "resource")
 
@@ -120,70 +119,3 @@ def fts_search(db: sqlite3.Connection, query: str):
         ]
     except sqlite3.OperationalError:
         return None
-
-
-# ── Inbox ────────────────────────────────────────────────────────────────────────
-
-# Maps inbox line prefixes to entry types
-_PREFIX_TYPE = {
-    "read":  "link",
-    "job":   "job",
-    "skill": "skill",
-    "idea":  "idea",
-    "inspo": "resource",
-    "note":  "note",
-    "link":  "link",
-}
-
-
-def _parse_inbox_line(line: str):
-    """Parse one inbox line into entry field dict. Returns None for blank lines."""
-    line = line.strip()
-    if not line:
-        return None
-    # Bare URL → save as link
-    if line.startswith(("http://", "https://")):
-        return {"title": line, "url": line, "type": "link", "content": "", "tags": ""}
-    # Prefix like "idea: build a thing" or "read: https://..."
-    if ":" in line:
-        prefix, _, rest = line.partition(":")
-        p = prefix.strip().lower()
-        rest = rest.strip()
-        if p in _PREFIX_TYPE and rest:
-            url = rest if rest.startswith(("http://", "https://")) else ""
-            return {"title": rest, "url": url, "type": _PREFIX_TYPE[p], "content": "", "tags": ""}
-    # Plain text → note
-    return {"title": line, "url": "", "type": "note", "content": "", "tags": ""}
-
-
-def import_inbox(db: sqlite3.Connection) -> dict:
-    """
-    Read every line from inbox.txt, insert as entries, clear the file.
-    Returns {"imported": int, "skipped": int, "items": [...]}
-    """
-    if not INBOX_PATH.exists():
-        return {"imported": 0, "skipped": 0, "items": []}
-
-    lines = INBOX_PATH.read_text(encoding="utf-8").splitlines()
-    imported, skipped = [], 0
-
-    for line in lines:
-        entry = _parse_inbox_line(line)
-        if entry is None:
-            skipped += 1
-            continue
-        ts  = now_iso()
-        cur = db.execute(
-            "INSERT INTO entries"
-            " (title, content, url, type, tags, priority, status, created_at, updated_at)"
-            " VALUES (?, ?, ?, ?, ?, 3, 'active', ?, ?)",
-            (entry["title"], entry["content"], entry["url"],
-             entry["type"], entry["tags"], ts, ts),
-        )
-        imported.append({"id": cur.lastrowid, "title": entry["title"], "type": entry["type"]})
-
-    if imported:
-        db.commit()
-
-    INBOX_PATH.write_text("", encoding="utf-8")   # clear inbox
-    return {"imported": len(imported), "skipped": skipped, "items": imported}
